@@ -15,7 +15,7 @@ except ImportError:
 
 # Literally just ripped from stackoverflow.
 import fcntl, sys
-pid_file = 'proxmox_wlb.pid'
+pid_file = '/var/run/proxmox_wlb.pid'
 fp = open(pid_file, 'w')
 try:
     fcntl.lockf(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -30,16 +30,12 @@ except IOError:
 ###################################################
 logger = logging.getLogger('proxmox_wlb')
 logger.setLevel(logging.DEBUG)
-fh = logging.FileHandler('proxmox_wlb.log')
-fh.setLevel(logging.INFO)
 ch = logging.StreamHandler()
 ch.setLevel(logging.WARN)
 # create formatter and add it to the handlers
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-fh.setFormatter(formatter)
 ch.setFormatter(formatter)
 # add the handlers to the logger
-logger.addHandler(fh)
 logger.addHandler(ch)
 ##################################################
 
@@ -132,7 +128,16 @@ def get_hosts_info(proxmox_host, proxmox_user, proxmox_password, verify_ssl=True
         
 if __name__ == "__main__":
     config = configparser.RawConfigParser()
-    config.read('proxmox_wlb.cfg')
+    if sys.argv[1]:
+        config.read(sys.argv[1])
+    else:
+        config.read('proxmox_wlb.cfg')
+    if config.get('main', 'logdir'):
+        fh = logging.FileHandler(config.get('main', 'logdir')+'/proxmox_wlb.log')
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
+        
     nodes_info = get_hosts_info(config.get('proxmox', 'host'), 
                                 config.get('proxmox', 'user'),
                                 config.get('proxmox', 'password'),
