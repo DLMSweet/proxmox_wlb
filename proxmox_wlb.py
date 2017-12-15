@@ -1,14 +1,29 @@
 #!/usr/bin/env python
 import logging
 import contextlib
-import ConfigParser
 from proxmoxer import ProxmoxAPI
 try:
     from http.client import HTTPConnection # py3
 except ImportError:
     from httplib import HTTPConnection # py2
-from tendo import singleton
-me = singleton.SingleInstance() 
+from proxmoxer import ProxmoxAPI
+
+try:
+    import configparser # py3
+except ImportError:
+    import ConfigParser as configparser # py2
+
+# Literally just ripped from stackoverflow.
+import fcntl, sys
+pid_file = 'proxmox_wlb.pid'
+fp = open(pid_file, 'w')
+try:
+    fcntl.lockf(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except IOError:
+    # another instance is running
+    print("Another instance is running, exiting...")
+    sys.exit(0)
+
 
 ###################################################
 # Set up some basic logging
@@ -18,7 +33,7 @@ logger.setLevel(logging.DEBUG)
 fh = logging.FileHandler('proxmox_wlb.log')
 fh.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
+ch.setLevel(logging.WARN)
 # create formatter and add it to the handlers
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 fh.setFormatter(formatter)
@@ -116,7 +131,7 @@ def get_hosts_info(proxmox_host, proxmox_user, proxmox_password, verify_ssl=True
     return nodes_info
         
 if __name__ == "__main__":
-    config = ConfigParser.RawConfigParser()
+    config = configparser.RawConfigParser()
     config.read('proxmox_wlb.cfg')
     nodes_info = get_hosts_info(config.get('proxmox', 'host'), 
                                 config.get('proxmox', 'user'),
@@ -126,7 +141,7 @@ if __name__ == "__main__":
     if len(unbalanced['over'])>0:
         moves = migration_planner(unbalanced, nodes_info)
         for move in moves:
-            print "Would migrate VM %s from %s to %s" % (move[1], move[0], move[2])
+            print("Would migrate VM %s from %s to %s" % (move[1], move[0], move[2]))
     else:
         logger.info("All hosts appear reasonably balanced") 
 
