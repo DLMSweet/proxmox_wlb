@@ -1,3 +1,6 @@
+[main]
+logdir  = /var/log
+
 [proxmox]
 host = proxmox.local
 user = vm_mover@pam
