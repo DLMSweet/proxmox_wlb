@@ -31,7 +31,7 @@ except IOError:
 logger = logging.getLogger('proxmox_wlb')
 logger.setLevel(logging.DEBUG)
 fh = logging.FileHandler('proxmox_wlb.log')
-fh.setLevel(logging.DEBUG)
+fh.setLevel(logging.INFO)
 ch = logging.StreamHandler()
 ch.setLevel(logging.WARN)
 # create formatter and add it to the handlers
@@ -141,7 +141,7 @@ if __name__ == "__main__":
     if len(unbalanced['over'])>0:
         moves = migration_planner(unbalanced, nodes_info)
         for move in moves:
-            print("Would migrate VM %s from %s to %s" % (move[1], move[0], move[2]))
+            logger.warn("Would migrate VM %s from %s to %s" % (move[1], move[0], move[2]))
     else:
         logger.info("All hosts appear reasonably balanced") 
 
