@@ -19,22 +19,6 @@ except IOError:
     print("Another instance is running, exiting...")
     sys.exit(0)
 
-
-###################################################
-# Set up some basic logging
-###################################################
-logger = logging.getLogger('proxmox_wlb')
-logger.setLevel(logging.DEBUG)
-ch = logging.StreamHandler()
-ch.setLevel(logging.CRITICAL)
-# create formatter and add it to the handlers
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-ch.setFormatter(formatter)
-# add the handlers to the logger
-logger.addHandler(ch)
-##################################################
-
-
 def subsum(ys, cpuindex=2, memindex=4):
     # Number chosen because... I don't remember. It works.
     return sum([x[cpuindex]*100000+x[memindex] for x in ys])
@@ -84,7 +68,8 @@ def migration_planner(unbalanced, nodes_info):
         hostname = host[0]
         load = host[1]
         average = unbalanced['average']
-        logger.debug("Checking host %s with load of %s against average of %s", hostname, load, average)
+        logger.debug("Checking host %s with load of %s against average of %s",
+                     hostname, load, average)
         to_move_units = load-average
         logger.info("Want to move %s units off of %s", load-average, host[0])
         nodes_filtered = [x for x in nodes_info if x[0] == host[0] and x[6] != True]
@@ -95,7 +80,8 @@ def migration_planner(unbalanced, nodes_info):
         except ValueError:
             target_host = min(unbalanced['all'], key=lambda x: x[1])
             logger.warning("Selected %s as target host, but it's not my first choice (no underloaded nodes)", target_host[0])
-        logger.warning("Adding following planned move: VM %s from %s to %s", vm_to_move[1], hostname, target_host[0])
+        logger.warning("Adding following planned move: VM %s from %s to %s",
+                       vm_to_move[1], hostname, target_host[0])
         moves.append((hostname, vm_to_move[1], target_host[0]))
     return moves
 
@@ -135,10 +121,12 @@ def get_hosts_info(proxmox):
             else:
                 ha = False
             logger.debug("Finished processing VM: %s ", (vm['vmid']))
-            nodes_info.append([node['node'], vm['vmid'], mhz_usage, mhz_pct_host, vm['mem'], mem_pct_host, ha])
+            nodes_info.append([node['node'], vm['vmid'], mhz_usage,
+                               mhz_pct_host, vm['mem'], mem_pct_host, ha])
     return nodes_info
 
-if __name__ == "__main__":
+
+def main():
     config = configparser.RawConfigParser()
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", dest="config_file",
@@ -150,7 +138,15 @@ if __name__ == "__main__":
         fh.setLevel(logging.INFO)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
-
+    # Configure Logging
+    logger.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.CRITICAL)
+    # create formatter and add it to the handlers
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch.setFormatter(formatter)
+    # add the handlers to the logger
+    logger.addHandler(ch)
     proxmox = proxmoxer.ProxmoxAPI(config.get('proxmox', 'host'),
                                    user=config.get('proxmox', 'user'),
                                    password=config.get('proxmox', 'password'),
@@ -168,3 +164,7 @@ if __name__ == "__main__":
                 logger.error("Migration failed with an error: %s | Is another migration already in progress?", e)
     else:
         logger.debug("All hosts appear reasonably balanced")
+
+if __name__ == "__main__":
+    logger = logging.getLogger('proxmox_wlb')
+    main()
