@@ -127,6 +127,16 @@ def get_hosts_info(proxmox):
 
 
 def main():
+    # Configure Logging
+    logger.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.CRITICAL)
+    # create formatter and add it to the handlers
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch.setFormatter(formatter)
+    # add the handlers to the logger
+    logger.addHandler(ch)
+
     config = configparser.RawConfigParser()
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", dest="config_file",
@@ -138,15 +148,6 @@ def main():
         fh.setLevel(logging.INFO)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
-    # Configure Logging
-    logger.setLevel(logging.DEBUG)
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.CRITICAL)
-    # create formatter and add it to the handlers
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    ch.setFormatter(formatter)
-    # add the handlers to the logger
-    logger.addHandler(ch)
     proxmox = proxmoxer.ProxmoxAPI(config.get('proxmox', 'host'),
                                    user=config.get('proxmox', 'user'),
                                    password=config.get('proxmox', 'password'),
