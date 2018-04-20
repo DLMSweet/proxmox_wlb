@@ -10,10 +10,10 @@ try:
 except ImportError:
     import ConfigParser as configparser # py2
 
-pid_file = '/var/run/proxmox_wlb.pid'
-fp = open(pid_file, 'w')
+PID_FILE_LOC = '/var/run/proxmox_wlb.pid'
+PID_FILE = open(PID_FILE_LOC, 'w')
 try:
-    fcntl.lockf(fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    fcntl.lockf(PID_FILE, fcntl.LOCK_EX | fcntl.LOCK_NB)
 except IOError:
     # another instance is running
     print("Another instance is running, exiting...")
@@ -68,10 +68,10 @@ def check_balance(xs):
     for host in loads.keys():
         unbalanced['all'].append([host, loads[host]])
         if round((float(loads[host])/unbalanced['average']), 2) > 1.2:
-            logger.info("Host %s is overloaded: %s" % (host, loads[host]))
+            logger.info("Host %s is overloaded: %s", host, loads[host])
             unbalanced['over'].append([host, loads[host]])
         elif round((float(loads[host])/unbalanced['average']), 2) < 0.80:
-            logger.info("Host %s is underloaded: %s" % (host, loads[host]))
+            logger.info("Host %s is underloaded: %s", host, loads[host])
             unbalanced['under'].append([host, loads[host]])
     return unbalanced
 
@@ -84,18 +84,18 @@ def migration_planner(unbalanced, nodes_info):
         hostname = host[0]
         load = host[1]
         average = unbalanced['average']
-        logger.debug("Checking host %s with load of %s against average of %s" % (hostname, load, average))
+        logger.debug("Checking host %s with load of %s against average of %s", hostname, load, average)
         to_move_units = load-average
-        logger.info("Want to move %s units off of %s" % ((load-average), host[0]))
+        logger.info("Want to move %s units off of %s", load-average, host[0])
         nodes_filtered = [x for x in nodes_info if x[0] == host[0] and x[6] != True]
         vm_to_move = min(nodes_filtered, key=lambda x: abs(x[2]*100000+x[4]-to_move_units))
         try:
             target_host = min(unbalanced['under'], key=lambda x: x[1])
-            logger.info("Selected %s as target host (lowest load)" % target_host[0])
+            logger.info("Selected %s as target host (lowest load)", target_host[0])
         except ValueError:
             target_host = min(unbalanced['all'], key=lambda x: x[1])
-            logger.warning("Selected %s as target host, but it's not my first choice (no underloaded nodes)" % target_host[0])
-        logger.warning("Adding following planned move: VM %s from %s to %s" % (vm_to_move[1], hostname, target_host[0]))
+            logger.warning("Selected %s as target host, but it's not my first choice (no underloaded nodes)", target_host[0])
+        logger.warning("Adding following planned move: VM %s from %s to %s", vm_to_move[1], hostname, target_host[0])
         moves.append((hostname, vm_to_move[1], target_host[0]))
     return moves
 
@@ -105,14 +105,14 @@ def get_hosts_info(proxmox):
     ha_vms = []
     logger.debug("Finding VMs set up for HA")
     for ha_vm in proxmox.cluster.ha.resources.get():
-        logger.debug("Found HA VM: %s" % ha_vm['sid'])
+        logger.debug("Found HA VM: %s", ha_vm['sid'])
         ha_vms.append(str(ha_vm['sid']).split(':')[1])
     for node in proxmox.nodes.get():
         # We add an empty set here JUST so that every node shows up
         nodes_info.append([node['node'], 0, 0, 0, 0, 0, True])
         node_max_mhz = node['maxcpu']*proxmox_avg_cpu
         for vm in proxmox.nodes(node['node']).qemu.get():
-            logger.debug("Found VM: %s on node %s" % (vm['vmid'], node['node']))
+            logger.debug("Found VM: %s on node %s", vm['vmid'], node['node'])
             # Gets Memory usage as % of Host
             mem_pct_host = 100*(int(vm['maxmem'])/float(node['maxmem']))
             # Gets CPU usage in Mhz based on an average of the last hour:
@@ -126,7 +126,7 @@ def get_hosts_info(proxmox):
                 cpu_usage = sum(cpu_usage)/float(len(cpu_usage))
                 mhz_usage = int((proxmox_avg_cpu*vm['cpus'])*cpu_usage)
             except ZeroDivisionError:
-                logger.debug("Got ZeroDivisionError on %s, it's probably turned off" % vm['vmid'])
+                logger.debug("Got ZeroDivisionError on %s, it's probably turned off", vm['vmid'])
                 mhz_usage = 0
             # Gets CPU usage as % of Host
             mhz_pct_host = 100*(mhz_usage/float(node_max_mhz))
@@ -134,7 +134,7 @@ def get_hosts_info(proxmox):
                 ha = True
             else:
                 ha = False
-            logger.debug("Finished processing VM: %s " % (vm['vmid']))
+            logger.debug("Finished processing VM: %s ", (vm['vmid']))
             nodes_info.append([node['node'], vm['vmid'], mhz_usage, mhz_pct_host, vm['mem'], mem_pct_host, ha])
     return nodes_info
 
@@ -161,10 +161,10 @@ if __name__ == "__main__":
     if len(unbalanced['over']) > 0:
         moves = migration_planner(unbalanced, nodes_info)
         for move in moves:
-            logger.warning("Migrating VM %s from %s to %s" % (move[1], move[0], move[2]))
+            logger.warning("Migrating VM %s from %s to %s", move[1], move[0], move[2])
             try:
                 proxmox.nodes(move[0]).qemu(move[1]).migrate.post(target=move[2], online=1)
             except proxmoxer.core.ResourceException as e:
-                logger.error("Migration failed with an error: %s | Is another migration already in progress?" % e)
+                logger.error("Migration failed with an error: %s | Is another migration already in progress?", e)
     else:
         logger.debug("All hosts appear reasonably balanced")
