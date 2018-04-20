@@ -2,14 +2,8 @@
 import logging
 import fcntl
 import sys
-import contextlib
-import proxmoxer
 import argparse
-try:
-    from http.client import HTTPConnection # py3
-except ImportError:
-    from httplib import HTTPConnection # py2
-from proxmoxer import ProxmoxAPI
+import proxmoxer
 
 try:
     import configparser # py3
@@ -157,7 +151,7 @@ if __name__ == "__main__":
         fh.setFormatter(formatter)
         logger.addHandler(fh)
 
-    proxmox = ProxmoxAPI(config.get('proxmox', 'host'), 
+    proxmox = proxmoxer.ProxmoxAPI(config.get('proxmox', 'host'), 
                          user=config.get('proxmox', 'user'),
                          password=config.get('proxmox', 'password'), 
                          verify_ssl=config.getboolean('proxmox', 'verify_ssl'))
