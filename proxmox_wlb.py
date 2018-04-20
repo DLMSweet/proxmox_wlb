@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 import logging
+import fcntl
+import sys
 import contextlib
 import proxmoxer
 import argparse
@@ -14,8 +16,6 @@ try:
 except ImportError:
     import ConfigParser as configparser # py2
 
-# Literally just ripped from stackoverflow.
-import fcntl, sys
 pid_file = '/var/run/proxmox_wlb.pid'
 fp = open(pid_file, 'w')
 try:
@@ -62,7 +62,7 @@ def check_balance(xs):
     n = len(set([x[0] for x in xs]))
     max_mem_wanted = sum([x[4] for x in xs]) // n
     max_cpu_wanted = sum([x[2] for x in xs]) // n
-    logger.debug("Max size wanted per host: %s GB %s Mhz" % (max_mem_wanted//1024**3, max_cpu_wanted))
+    logger.debug("Max size wanted per host: %s GB %s Mhz", max_mem_wanted//1024**3, max_cpu_wanted)
     hosts = set([x[0] for x in xs])
     loads = {}
     average = 0
