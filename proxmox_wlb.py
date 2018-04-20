@@ -100,8 +100,8 @@ def migration_planner(unbalanced, nodes_info):
             logger.info("Selected %s as target host (lowest load)" % target_host[0])
         except ValueError:
             target_host = min(unbalanced['all'], key=lambda x:x[1] )
-            logger.warn("Selected %s as target host, but it's not my first choice (no underloaded nodes)" % target_host[0])
-        logger.warn("Adding following planned move: VM %s from %s to %s" % (vm_to_move[1], hostname, target_host[0]))
+            logger.warning("Selected %s as target host, but it's not my first choice (no underloaded nodes)" % target_host[0])
+        logger.warning("Adding following planned move: VM %s from %s to %s" % (vm_to_move[1], hostname, target_host[0]))
         moves.append((hostname, vm_to_move[1], target_host[0]))
     return moves
                      
@@ -167,7 +167,7 @@ if __name__ == "__main__":
     if len(unbalanced['over'])>0:
         moves = migration_planner(unbalanced, nodes_info)
         for move in moves:
-            logger.warn("Migrating VM %s from %s to %s" % (move[1], move[0], move[2]))
+            logger.warning("Migrating VM %s from %s to %s" % (move[1], move[0], move[2]))
             try:
                 proxmox.nodes(move[0]).qemu(move[1]).migrate.post(target=move[2],online=1)
             except proxmoxer.core.ResourceException as e:
