@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import os
 import logging
 import fcntl
 import sys
@@ -37,6 +38,7 @@ def chunk(xs):
 
 def check_balance(xs):
     unbalanced = {'average': 0, 'under': list(), 'over': list(), 'all': list()}
+    maintenance_mode = get_maintenance()
     n = len(set([x[0] for x in xs]))
     max_mem_wanted = sum([x[4] for x in xs]) // n
     max_cpu_wanted = sum([x[2] for x in xs]) // n
@@ -51,7 +53,10 @@ def check_balance(xs):
     unbalanced['average'] = average//n
     for host in loads.keys():
         unbalanced['all'].append([host, loads[host]])
-        if round((float(loads[host])/unbalanced['average']), 2) > 1.2:
+        if host in maintenance_mode:
+            logger.info("Host %s is in Maintenance mode, trying to clear it off" % host)
+            unbalanced['over'].append([host, loads[host]])
+        elif round((float(loads[host])/unbalanced['average']), 2) > 1.2:
             logger.info("Host %s is overloaded: %s", host, loads[host])
             unbalanced['over'].append([host, loads[host]])
         elif round((float(loads[host])/unbalanced['average']), 2) < 0.80:
@@ -78,7 +83,7 @@ def migration_planner(unbalanced, nodes_info):
             target_host = min(unbalanced['under'], key=lambda x: x[1])
             logger.info("Selected %s as target host (lowest load)", target_host[0])
         except ValueError:
-            target_host = min(unbalanced['all'], key=lambda x: x[1])
+            target_host = min([ x for x in unbalanced['all'] if x[0] != host[0]], key=lambda x: x[1])
             logger.warning("Selected %s as target host, but it's not my first choice (no underloaded nodes)", target_host[0])
         logger.warning("Adding following planned move: VM %s from %s to %s",
                        vm_to_move[1], hostname, target_host[0])
@@ -127,6 +132,12 @@ def get_hosts_info(proxmox):
                                mhz_pct_host, vm['mem'], mem_pct_host, ha])
     return nodes_info
 
+def get_maintenance():
+    maintenance_mode = []
+    for file in os.listdir(os.path.dirname(os.path.realpath(__file__))):
+        if file.endswith(".maintenance"):
+            maintenance_mode.append(file.replace(".maintenance", ""))
+    return maintenance_mode
 
 def main():
     # Configure Logging
@@ -155,6 +166,7 @@ def main():
                                    password=config.get('proxmox', 'password'),
                                    verify_ssl=config.getboolean('proxmox', 'verify_ssl'))
 
+    get_maintenance()
     nodes_info = get_hosts_info(proxmox)
     unbalanced = check_balance(nodes_info)
     if len(unbalanced['over']) > 0:
