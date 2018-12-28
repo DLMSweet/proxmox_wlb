@@ -94,6 +94,8 @@ def get_hosts_info(proxmox):
         logger.debug("Found HA VM: %s", ha_vm['sid'])
         ha_vms.append(str(ha_vm['sid']).split(':')[1])
     for node in proxmox.nodes.get():
+        if node['status'] == 'offline':
+            continue
         # We add an empty set here JUST so that every node shows up
         nodes_info.append([node['node'], 0, 0, 0, 0, 0, True])
         node_max_mhz = node['maxcpu']*proxmox_avg_cpu
