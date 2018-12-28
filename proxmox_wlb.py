@@ -37,7 +37,11 @@ def chunk(xs):
     return chunks
 
 def check_balance(xs):
-    unbalanced = {'average': 0, 'under': list(), 'over': list(), 'all': list()}
+    unbalanced = {'average': 0, 
+                  'under': list(), 
+                  'over': list(), 
+                  'maint': list(),
+                  'all': list()}
     maintenance_mode = get_maintenance()
     n = len(set([x[0] for x in xs]))
     max_mem_wanted = sum([x[4] for x in xs]) // n
@@ -52,16 +56,20 @@ def check_balance(xs):
         average += load
     unbalanced['average'] = average//n
     for host in loads.keys():
-        unbalanced['all'].append([host, loads[host]])
         if host in maintenance_mode:
             logger.info("Host %s is in Maintenance mode, trying to clear it off" % host)
-            unbalanced['over'].append([host, loads[host]])
+            unbalanced['maint'].append([host, loads[host]])
         elif round((float(loads[host])/unbalanced['average']), 2) > 1.2:
             logger.info("Host %s is overloaded: %s", host, loads[host])
             unbalanced['over'].append([host, loads[host]])
+            unbalanced['all'].append([host, loads[host]])
         elif round((float(loads[host])/unbalanced['average']), 2) < 0.80:
             logger.info("Host %s is underloaded: %s", host, loads[host])
             unbalanced['under'].append([host, loads[host]])
+            unbalanced['all'].append([host, loads[host]])
+        else:
+            logger.info("Host %s just is: %s", host, loads[host])
+            unbalanced['all'].append([host, loads[host]])
     return unbalanced
 
 def migration_planner(unbalanced, nodes_info):
@@ -69,6 +77,24 @@ def migration_planner(unbalanced, nodes_info):
        To that end, we don't really mind if hosts are underloaded, so long as
        they aren't overloaded.'''
     moves = []
+    for host in unbalanced['maint']:
+        hostname = host[0]
+        logger.debug("Host %s is in maintenance mode, moving all resources off of it" % hostname)
+        # Get a list of all VMs on host
+        nodes_filtered = [x for x in nodes_info if x[0] == host[0] and int(x[1]) > 0 ] 
+        vm_to_move = min(nodes_filtered, key=lambda x: abs(x[2]*100000+x[4]))
+        try:
+            # Try to get the lowest loaded server that needs more load
+            target_host = min(unbalanced['under'], key=lambda x: x[1])
+            logger.info("Selected %s as target host (lowest load)", target_host[0])
+        except ValueError:
+            # If we can't do that, try for the least loaded server that isn't the current server
+            target_host = min([ x for x in unbalanced['all'] if x[0] != host[0]], key=lambda x: x[1])
+            logger.warning("Selected %s as target host, but it's not my first choice (no underloaded nodes)", target_host[0])
+        logger.warning("Adding following planned move: VM %s from %s to %s",
+                       vm_to_move[1], hostname, target_host[0])
+        moves.append((hostname, vm_to_move[1], target_host[0]))
+
     for host in unbalanced['over']:
         hostname = host[0]
         load = host[1]
