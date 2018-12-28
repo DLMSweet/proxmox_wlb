@@ -7,6 +7,5 @@ user = vm_mover@pam
 password = passw0rd 
 verify_ssl = 1 
 
-[hardware]
-# In Mhz
-cpu_freq = 2270 
+[exclude_vms]
+id = 0
