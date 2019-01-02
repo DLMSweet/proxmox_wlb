@@ -8,4 +8,6 @@ password = passw0rd
 verify_ssl = 1 
 
 [exclude_vms]
+# This is a comma-seperated list of VMs to ALWAYS exclude from moving
+# Including excluding them from being moved off of hosts in maintenance!
 id = 0
