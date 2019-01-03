@@ -448,28 +448,33 @@ class ProxmoxCluster():
 
     def perform_migration_plan(self, planned_moves):
         for move in planned_moves:
+            source_host =  move[0]
+            virtual_machine = move[1]
+            destination_host = move[2]
             if not self.simulate:
                 logger.warning("Migrating VM %s from %s to %s",
-                               move[1], move[0], move[2])
+                               virtual_machine,
+                               source_host,
+                               destination_host)
                 try:
-                    task_name = self.proxmox.nodes(move[0]).qemu(
-                        move[1].id).migrate.post(target=move[2], online=1)
+                    task_name = self.proxmox.nodes(source_host).qemu(
+                        virtual_machine.id).migrate.post(target=destination_host, online=1)
                     logger.info(
-                        "Migration of %s started with task ID of %s", move[1], task_name)
-                    while self.proxmox.nodes(move[0]).tasks(task_name).get('status')['status'] != "stopped":
+                        "Migration of %s started with task ID of %s", virtual_machine, task_name)
+                    while self.proxmox.nodes(source_host).tasks(task_name).get('status')['status'] != "stopped":
                         time.sleep(10)
                         logger.debug(
-                            "Waiting for migration of %s -> %s to complete...", move[1], move[2])
-                    exit_status = self.proxmox.nodes(move[0]).tasks(
+                            "Waiting for migration of %s -> %s to complete...", virtual_machine, destination_host)
+                    exit_status = self.proxmox.nodes(source_host).tasks(
                         task_name).get('status')['exitstatus']
                     logger.info(
-                        "Migration of %s to %s finished with status: %s", move[1], move[2], exit_status)
+                        "Migration of %s to %s finished with status: %s", virtual_machine, destination_host, exit_status)
                 except proxmoxer.core.ResourceException as e:
                     logger.error(
                         "Migration failed with an error: %s | Is another migration already in progress?", e)
             else:
                 logger.warning("Would migrate VM %s from %s to %s",
-                               move[1], move[0], move[2])
+                               virtual_machine, source_host, destination_host)
 
     def __str__(self):
         return str(self.proxmox_nodes)
