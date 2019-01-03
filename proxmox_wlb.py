@@ -19,7 +19,7 @@ class ProxmoxVM():
         self.id = id
         self.ha = ha
         self.child_vms = []
-        self.state = "active"
+        self.state = "" 
         self.max_memory = 0
         self.used_memory = 0
         self.cpus = 0
@@ -27,7 +27,7 @@ class ProxmoxVM():
         self.cost = {}
 
     def set_state(self, state):
-        """Set the VM state, eg: "active", "stopped", etc"""
+        """Set the VM state, eg: "running", "stopped", etc"""
         self.state = state
 
     def set_memory_info(self, max_memory, used_memory):
@@ -67,6 +67,7 @@ class ProxmoxHost():
         # Memory info
         self.max_memory = 0
         # Usage info
+        self.allocated_memory = 0
         self.used_memory = 0
         self.used_cpu_mhz = 0
         self.running_vms = 0
@@ -88,14 +89,15 @@ class ProxmoxHost():
         self.used_cpu_mhz = 0
         self.running_vms = 0
         for VM in self.get_vms():
+            self.allocated_memory += VM.max_memory
             self.used_memory += VM.used_memory
             self.used_cpu_mhz += VM.cpu_usage*(VM.cpus*self.per_cpu_mhz)
-            if VM.state == "active":
+            if VM.state == "running":
                 self.running_vms += 1
         free_cpu_mhz = self.max_mhz-self.used_cpu_mhz
         free_memory = self.max_memory-self.used_memory
         return {"used_cpu_mhz": self.used_cpu_mhz,
-                "used_memory": self.used_memory,
+                "used_memory": self.allocated_memory,
                 "free_cpu_mhz": free_cpu_mhz,
                 "free_memory": free_memory,
                 "running_vms": self.running_vms}
@@ -192,6 +194,8 @@ class ProxmoxCluster():
                 proxmox_vm = ProxmoxVM(vm['name'], vm['vmid'])
 
             proxmox_vm.set_memory_info(vm['maxmem'], vm['mem'])
+            logger.debug(vm)
+            proxmox_vm.set_state(vm['status'])
             # Gets CPU usage in Mhz based on an average of the last hour:
             try:
                 cpu_usage = []
@@ -209,7 +213,7 @@ class ProxmoxCluster():
                 logger.debug(
                     "Got ZeroDivisionError on %s (%s), it's probably turned off", vm['name'], vm['vmid'])
                 cpu_usage = 0
-                proxmox_vm.set_state("inactive")
+                proxmox_vm.set_state("stopped")
 
             proxmox_vm.set_cpu_usage(vm['cpus'], cpu_usage)
             proxmox_node.add_vm(proxmox_vm)
@@ -233,7 +237,7 @@ class ProxmoxCluster():
         value_range = (.8, 1.2)
         self.stats["average"] = {}
         self.stats["average"]["memory_usage"] = int(
-            statistics.mean([x.used_memory for x in self.proxmox_nodes]))
+            statistics.mean([x.allocated_memory for x in self.proxmox_nodes]))
         self.stats["average"]["cpu_usage"] = int(
             statistics.mean([x.used_cpu_mhz for x in self.proxmox_nodes]))
         self.stats["average"]["running_vms"] = int(
@@ -357,12 +361,12 @@ class ProxmoxCluster():
             for node in maintenance_mode:
                 logger.info("Want to move ALL off of %s", node)
                 filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
-                                "active" and x.id not in self.excluded_vms]
+                                "running" and x.id not in self.excluded_vms]
                 while filtered_vms:
                     # We look for the host with the lowest memory first, as that tends to be the usual bottleneck
                     potential_host = self.get_lowest_loaded(metric="mem")
                     filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
-                                    "active" and x.id not in self.excluded_vms]
+                                    "running" and x.id not in self.excluded_vms]
                     # It doesn't really matter what order we do this in, but we start with the smallest
                     logger.debug(
                         "VMs not already being moved: %s", filtered_vms)
@@ -375,37 +379,13 @@ class ProxmoxCluster():
                     proxmox_node.remove_vm(virtual_machine_to_move)
                     potential_host.add_vm(virtual_machine_to_move)
 
-            # Now we check for overloaded CPUs
-            for node in proxmox_nodes_cpu_check:
-                proxmox_node = self.get_node(node)
-                logger.info("Want to move %s CPU units off of %s",
-                            self.stats[node]["cpu_usage_shed"], node)
-                potential_host = self.get_lowest_loaded(metric="cpu")
-                filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
-                                "active" and x.id not in self.excluded_vms]
-                logger.debug("VMs not already being moved: %s", filtered_vms)
-                if not filtered_vms:
-                    continue
-                virtual_machine_to_move = self.filter_candidates(
-                    filtered_vms, node, metric="cpu")
-                if virtual_machine_to_move:
-                    logger.debug("Would probably move %s (%s CPU units) to: %s",
-                                 virtual_machine_to_move.name, virtual_machine_to_move.cost['vm_cpu_mhz'], potential_host)
-                    logger.debug("%s - percentage of shed: %s",
-                                 virtual_machine_to_move.name, (virtual_machine_to_move.cost['vm_cpu_mhz']/self.stats[node]["cpu_usage_shed"])*100)
-                    planned_moves.append(
-                        (proxmox_node, virtual_machine_to_move, potential_host))
-                    moving_vms.append(virtual_machine_to_move)
-                    proxmox_node.remove_vm(virtual_machine_to_move)
-                    potential_host.add_vm(virtual_machine_to_move)
-
             # And for memory. There's probably a much easier way to do this.
             for node in proxmox_nodes_mem_check:
                 proxmox_node = self.get_node(node)
                 logger.info("Want to move %s Memory units off of %s",
                             self.stats[node]["memory_shed"], node)
                 filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
-                                "active" and x.id not in self.excluded_vms]
+                                "running" and x.id not in self.excluded_vms]
                 potential_host = self.get_lowest_loaded(metric="mem")
                 logger.debug("VMs not already being moved: %s", filtered_vms)
                 if not filtered_vms:
@@ -423,13 +403,38 @@ class ProxmoxCluster():
                     proxmox_node.remove_vm(virtual_machine_to_move)
                     potential_host.add_vm(virtual_machine_to_move)
 
+            # Now we check for overloaded CPUs
+            for node in proxmox_nodes_cpu_check:
+                proxmox_node = self.get_node(node)
+                logger.info("Want to move %s CPU units off of %s",
+                            self.stats[node]["cpu_usage_shed"], node)
+                potential_host = self.get_lowest_loaded(metric="cpu")
+                filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
+                                "running" and x.id not in self.excluded_vms]
+                logger.debug("VMs not already being moved: %s", filtered_vms)
+                if not filtered_vms:
+                    continue
+                virtual_machine_to_move = self.filter_candidates(
+                    filtered_vms, node, metric="cpu")
+                if virtual_machine_to_move:
+                    logger.debug("Would probably move %s (%s CPU units) to: %s",
+                                 virtual_machine_to_move.name, virtual_machine_to_move.cost['vm_cpu_mhz'], potential_host)
+                    logger.debug("%s - percentage of shed: %s",
+                                 virtual_machine_to_move.name, (virtual_machine_to_move.cost['vm_cpu_mhz']/self.stats[node]["cpu_usage_shed"])*100)
+                    planned_moves.append(
+                        (proxmox_node, virtual_machine_to_move, potential_host))
+                    moving_vms.append(virtual_machine_to_move)
+                    proxmox_node.remove_vm(virtual_machine_to_move)
+                    potential_host.add_vm(virtual_machine_to_move)
+
+
             # Lastly, purely cosmetic. Probably. We try to balance out the number of running VMs
             for node in proxmox_nodes_vm_check:
                 proxmox_node = self.get_node(node)
                 logger.info("Want to move %s VMs off of %s",
                             self.stats[node]["running_vms_shed"], node)
                 filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
-                                "active" and x.id not in self.excluded_vms]
+                                "running" and x.id not in self.excluded_vms]
                 logger.debug("VMs not already being moved: %s", filtered_vms)
                 if not filtered_vms:
                     continue
@@ -447,6 +452,12 @@ class ProxmoxCluster():
         return planned_moves
 
     def perform_migration_plan(self, planned_moves):
+        logger.info("Planning the following moves: ")
+        for move in planned_moves:
+            source_host =  move[0]
+            virtual_machine = move[1]
+            destination_host = move[2]
+            logger.info("MOVE: VM: %s, from %s to %s", virtual_machine, source_host, destination_host)
         for move in planned_moves:
             source_host =  move[0]
             virtual_machine = move[1]
@@ -513,7 +524,7 @@ def main():
     if config.get('main', 'logdir'):
         fh = logging.FileHandler(config.get(
             'main', 'logdir')+'/proxmox_wlb.log')
-        fh.setLevel(logging.INFO)
+        fh.setLevel(logging.DEBUG)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
     proxmox = ProxmoxCluster(config, simulate=args.simulate)
