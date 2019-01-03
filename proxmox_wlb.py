@@ -97,7 +97,8 @@ class ProxmoxHost():
         free_cpu_mhz = self.max_mhz-self.used_cpu_mhz
         free_memory = self.max_memory-self.used_memory
         return {"used_cpu_mhz": self.used_cpu_mhz,
-                "used_memory": self.allocated_memory,
+                "used_memory": self.used_memory,
+                "allocated_memory": self.allocated_memory,
                 "free_cpu_mhz": free_cpu_mhz,
                 "free_memory": free_memory,
                 "running_vms": self.running_vms}
@@ -237,7 +238,7 @@ class ProxmoxCluster():
         value_range = (.8, 1.2)
         self.stats["average"] = {}
         self.stats["average"]["memory_usage"] = int(
-            statistics.mean([x.allocated_memory for x in self.proxmox_nodes]))
+            statistics.mean([x.used_memory for x in self.proxmox_nodes]))
         self.stats["average"]["cpu_usage"] = int(
             statistics.mean([x.used_cpu_mhz for x in self.proxmox_nodes]))
         self.stats["average"]["running_vms"] = int(
