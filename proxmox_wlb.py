@@ -502,16 +502,6 @@ def main():
         print("Another instance is running, exiting...")
         sys.exit(0)
 
-    # Configure Logging
-    logger.setLevel(logging.DEBUG)
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.ERROR)
-    # create formatter and add it to the handlers
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    ch.setFormatter(formatter)
-    # add the handlers to the logger
-    logger.addHandler(ch)
     config = configparser.RawConfigParser()
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", dest="config_file",
@@ -520,8 +510,23 @@ def main():
                         help="Don't actually perform migrations")
     parser.add_argument("--no-simulate", dest="simulate", action='store_false',
                         help="Perform migrations")
+    parser.add_argument("--debug", dest="debug", action='store_true',
+                        help="Show debugging options")
     args = parser.parse_args()
     config.read(args.config_file)
+    # Configure Logging
+    logger.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()
+    if args.debug:
+        ch.setLevel(logging.DEBUG)
+    else:
+        ch.setLevel(logging.ERROR)
+    # create formatter and add it to the handlers
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch.setFormatter(formatter)
+    # add the handlers to the logger
+    logger.addHandler(ch)
     if config.get('main', 'logdir'):
         fh = logging.FileHandler(config.get(
             'main', 'logdir')+'/proxmox_wlb.log')
