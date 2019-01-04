@@ -213,7 +213,6 @@ class ProxmoxCluster():
                 proxmox_vm = ProxmoxVM(vm['name'], vm['vmid'])
 
             proxmox_vm.set_memory_info(vm['maxmem'], vm['mem'])
-            logger.debug(vm)
             proxmox_vm.set_state(vm['status'])
             # Gets CPU usage in Mhz based on an average of the last hour:
             try:
@@ -253,7 +252,7 @@ class ProxmoxCluster():
 
     def calculate_imbalances(self):
         unbalanced = False
-        value_range = (.8, 1.2)
+        value_range = (.8, 1.75)
         self.stats["average"] = {}
         for metric in self.metrics:
             self.stats["average"][metric] = int(
@@ -276,7 +275,6 @@ class ProxmoxCluster():
                                  proxmox_node.name, metric, proxmox_node.get_metric(metric), self.stats["average"][metric]*value_range[0])
                 else:
                     self.stats[proxmox_node.name][metric] = "OKAY"
-        logger.debug(self.stats)
         return unbalanced
 
 
@@ -284,24 +282,24 @@ class ProxmoxCluster():
     def get_lowest_loaded(self, metric="cpu"):
         filtered_nodes = [
             x for x in self.proxmox_nodes if x.status == "online"]
-        if metric == "cpu":
+        if metric == "used_cpu_mhz":
             return min(filtered_nodes, key=lambda x: x.used_cpu_mhz)
-        if metric == "mem":
+        if metric == "used_memory":
             return min(filtered_nodes, key=lambda x: x.used_memory)
-        if metric == "vms":
+        if metric == "running_vms":
             return min(filtered_nodes, key=lambda x: x.running_vms)
         return False
 
-    def filter_candidates(self, vm_list, node, metric="cpu", minimum_pct=.75, maximum_pct=1.5, depth=0):
+    def filter_candidates(self, vm_list, node, metric="used_cpu_mhz", minimum_pct=.75, maximum_pct=1.50, depth=0):
         if depth > 5:
             # 5 iterations is enough
             return None
         # First, we get all the machines that won't drain too much off of the host
         # but won't be a waste of time to move.
-        if metric == "cpu":
+        if metric == "used_cpu_mhz":
             vm_candidates = [x for x in vm_list if x.cost['vm_cpu_mhz']/self.stats[node]["used_cpu_mhz_shed"] > minimum_pct
                              and x.cost['vm_cpu_mhz']/self.stats[node]["used_cpu_mhz_shed"] < maximum_pct]
-        elif metric == "mem":
+        elif metric == "used_memory":
             vm_candidates = [x for x in vm_list if x.used_memory/self.stats[node]["used_memory_shed"] > minimum_pct
                              and x.used_memory/self.stats[node]["used_memory_shed"] < maximum_pct]
         else:
@@ -336,99 +334,21 @@ class ProxmoxCluster():
         moving_vms = []
         maintenance_mode = [
             x for x in self.proxmox_nodes if x.status == "maintenance"]
-        while self.calculate_imbalances() and iterations < 100:
-            iterations += 1
-            proxmox_nodes_cpu_check = [
-                x for x in self.stats if self.stats[x]["used_cpu_mhz"] == "HIGH"]
-            proxmox_nodes_mem_check = [
-                x for x in self.stats if self.stats[x]["used_memory"] == "HIGH"]
-            proxmox_nodes_vm_check = [
-                x for x in self.stats if self.stats[x]["running_vms"] == "HIGH"]
-            # First things first, we need to check for maintenance mode and clear that system
-            for node in maintenance_mode:
-                logger.info("Want to move ALL off of %s", node)
-                filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
-                                "running" and x.id not in self.excluded_vms]
-                while filtered_vms:
-                    # We look for the host with the lowest memory first, as that tends to be the usual bottleneck
-                    potential_host = self.get_lowest_loaded(metric="mem")
-                    filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
-                                    "running" and x.id not in self.excluded_vms]
-                    # It doesn't really matter what order we do this in, but we start with the smallest
-                    logger.debug(
-                        "VMs not already being moved: %s", filtered_vms)
-                    virtual_machine_to_move = min(filtered_vms)
-                    logger.debug("Would probably move %s to: %s",
-                                 virtual_machine_to_move.name, potential_host)
-                    planned_moves.append(
-                        (proxmox_node, virtual_machine_to_move, potential_host))
-                    moving_vms.append(virtual_machine_to_move)
-                    proxmox_node.remove_vm(virtual_machine_to_move)
-                    potential_host.add_vm(virtual_machine_to_move)
-
-            # And for memory. There's probably a much easier way to do this.
-            for node in proxmox_nodes_mem_check:
-                proxmox_node = self.get_node(node)
-                logger.info("Want to move %s Memory units off of %s",
-                            self.stats[node]["used_memory"], node)
-                filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
-                                "running" and x.id not in self.excluded_vms]
+        # First things first, we need to check for maintenance mode and clear that system
+        for node in maintenance_mode:
+            logger.info("Want to move ALL off of %s", node)
+            filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
+                            "running" and x.id not in self.excluded_vms]
+            while filtered_vms:
+                # We look for the host with the lowest memory first, as that tends to be the usual bottleneck
                 potential_host = self.get_lowest_loaded(metric="mem")
-                logger.debug("VMs not already being moved: %s", filtered_vms)
-                if not filtered_vms:
-                    continue
-                virtual_machine_to_move = self.filter_candidates(
-                    filtered_vms, node, metric="mem")
-                if virtual_machine_to_move:
-                    logger.debug("Would probably move %s (%s Memory units) to: %s",
-                                 virtual_machine_to_move.name, virtual_machine_to_move.used_memory, potential_host)
-                    logger.debug("%s - percentage of shed: %s",
-                                 virtual_machine_to_move.name, (virtual_machine_to_move.used_memory/self.stats[node]["used_memory_shed"])*100)
-                    planned_moves.append(
-                        (proxmox_node, virtual_machine_to_move, potential_host))
-                    moving_vms.append(virtual_machine_to_move)
-                    proxmox_node.remove_vm(virtual_machine_to_move)
-                    potential_host.add_vm(virtual_machine_to_move)
-
-            # Now we check for overloaded CPUs
-            for node in proxmox_nodes_cpu_check:
-                proxmox_node = self.get_node(node)
-                logger.info("Want to move %s CPU units off of %s",
-                            self.stats[node]["used_cpu_mhz_shed"], node)
-                potential_host = self.get_lowest_loaded(metric="cpu")
                 filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
                                 "running" and x.id not in self.excluded_vms]
-                logger.debug("VMs not already being moved: %s", filtered_vms)
-                if not filtered_vms:
-                    continue
-                virtual_machine_to_move = self.filter_candidates(
-                    filtered_vms, node, metric="cpu")
-                if virtual_machine_to_move:
-                    logger.debug("Would probably move %s (%s CPU units) to: %s",
-                                 virtual_machine_to_move.name, virtual_machine_to_move.cost['vm_cpu_mhz'], potential_host)
-                    logger.debug("%s - percentage of shed: %s",
-                                 virtual_machine_to_move.name, (virtual_machine_to_move.cost['vm_cpu_mhz']/self.stats[node]["used_cpu_mhz_shed"])*100)
-                    planned_moves.append(
-                        (proxmox_node, virtual_machine_to_move, potential_host))
-                    moving_vms.append(virtual_machine_to_move)
-                    proxmox_node.remove_vm(virtual_machine_to_move)
-                    potential_host.add_vm(virtual_machine_to_move)
-
-
-            # Lastly, purely cosmetic. Probably. We try to balance out the number of running VMs
-            for node in proxmox_nodes_vm_check:
-                proxmox_node = self.get_node(node)
-                logger.info("Want to move %s VMs off of %s",
-                            self.stats[node]["running_vms_shed"], node)
-                filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
-                                "running" and x.id not in self.excluded_vms]
-                logger.debug("VMs not already being moved: %s", filtered_vms)
-                if not filtered_vms:
-                    continue
-                potential_host = self.get_lowest_loaded(metric="vms")
-                virtual_machine_to_move = self.filter_candidates(
-                    filtered_vms, node, metric="vms")
-                logger.debug("Would probably move %s to %s",
+                # It doesn't really matter what order we do this in, but we start with the smallest
+                logger.debug(
+                    "VMs not already being moved: %s", filtered_vms)
+                virtual_machine_to_move = min(filtered_vms)
+                logger.debug("Would probably move %s to: %s",
                              virtual_machine_to_move.name, potential_host)
                 planned_moves.append(
                     (proxmox_node, virtual_machine_to_move, potential_host))
@@ -436,7 +356,36 @@ class ProxmoxCluster():
                 proxmox_node.remove_vm(virtual_machine_to_move)
                 potential_host.add_vm(virtual_machine_to_move)
 
+        while self.calculate_imbalances() and iterations < 100:
+            iterations += 1
+            for metric in self.metrics:
+                proxmox_nodes_check = [x for x in self.stats if self.stats[x][metric] == "HIGH"]
+                for node in proxmox_nodes_check:
+                    proxmox_node = self.get_node(node)
+                    logger.info("Want to move %s %s units off of %s",
+                                metric, self.stats[node][metric+"_shed"], node)
+                    filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
+                                    "running" and x.id not in self.excluded_vms]
+                    potential_host = self.get_lowest_loaded(metric=metric)
+                    logger.debug("VMs not already being moved: %s", filtered_vms)
+                    if not filtered_vms:
+                        continue
+                    virtual_machine_to_move = self.filter_candidates(
+                        filtered_vms, node, metric=metric)
+                    if virtual_machine_to_move:
+                        logger.debug("Would probably move %s (%s %s units) to: %s | Reason: Reduce %s on %s",
+                                     virtual_machine_to_move.name, virtual_machine_to_move.get_metric(metric), metric, potential_host,
+                                     metric, node)
+                        logger.debug("%s - percentage of shed: %s",
+                                     virtual_machine_to_move.name, (virtual_machine_to_move.get_metric(metric)/self.stats[node][metric+"_shed"])*100)
+                        planned_moves.append(
+                            (proxmox_node, virtual_machine_to_move, potential_host))
+                        moving_vms.append(virtual_machine_to_move)
+                        proxmox_node.remove_vm(virtual_machine_to_move)
+                        potential_host.add_vm(virtual_machine_to_move)
+
         return planned_moves
+
 
     def perform_migration_plan(self, planned_moves):
         logger.info("Planning the following moves: ")
