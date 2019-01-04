@@ -328,7 +328,7 @@ class ProxmoxCluster():
         moving_vms = []
         maintenance_mode = [
             x for x in self.proxmox_nodes if x.status == "maintenance"]
-        while self.calculate_imbalances2() and iterations < 100:
+        while self.calculate_imbalances() and iterations < 100:
             iterations += 1
             proxmox_nodes_cpu_check = [
                 x for x in self.stats if self.stats[x]["used_cpu_mhz"] == "HIGH"]
