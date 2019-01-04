@@ -40,6 +40,13 @@ class ProxmoxVM():
         self.cpus = cpus
         self.cpu_usage = cpu_usage
 
+    def get_metric(self, metric):
+        if metric == "used_memory":
+            return self.used_memory
+        if metric == "used_cpu_mhz":
+            return self.cost['vm_cpu_mhz']
+        return False
+
     def set_cost(self, cost):
         """Sets the as used by other classes"""
         self.cost = cost
@@ -149,6 +156,8 @@ class ProxmoxCluster():
         self.maintenance_mode = []
         self.proxmox_nodes = []
         self.stats = {}
+        # What metrics we balance on
+        self.metrics = ["used_cpu_mhz", "used_memory", "running_vms"]
 
     def connect(self):
         try:
@@ -245,14 +254,13 @@ class ProxmoxCluster():
     def calculate_imbalances(self):
         unbalanced = False
         value_range = (.8, 1.2)
-        metrics = ["used_memory", "used_cpu_mhz", "running_vms"]
         self.stats["average"] = {}
-        for metric in metrics:
+        for metric in self.metrics:
             self.stats["average"][metric] = int(
                 statistics.mean([x.get_metric(metric) for x in self.proxmox_nodes]))
         for proxmox_node in self.proxmox_nodes:
             self.stats[proxmox_node.name] = {}
-            for metric in metrics:
+            for metric in self.metrics:
                 if proxmox_node.get_metric(metric) > self.stats["average"][metric]*value_range[1]:
                     unbalanced = True
                     self.stats[proxmox_node.name][metric] = "HIGH"
@@ -285,8 +293,8 @@ class ProxmoxCluster():
         return False
 
     def filter_candidates(self, vm_list, node, metric="cpu", minimum_pct=.75, maximum_pct=1.5, depth=0):
-        if depth > 20:
-            # 20 iterations is enough
+        if depth > 5:
+            # 5 iterations is enough
             return None
         # First, we get all the machines that won't drain too much off of the host
         # but won't be a waste of time to move.
