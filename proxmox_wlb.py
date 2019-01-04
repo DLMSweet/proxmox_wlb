@@ -113,6 +113,15 @@ class ProxmoxHost():
         self.child_vms.append(virtual_machine)
         self.get_usage()
 
+    def get_metric(self, metric):
+        if metric == "used_memory":
+            return self.used_memory
+        if metric == "used_cpu_mhz":
+            return self.used_cpu_mhz
+        if metric == "running_vms":
+            return self.running_vms
+        return False
+
     def remove_vm(self, virtual_machine):
         self.child_vms.remove(virtual_machine)
         self.get_usage()
@@ -236,64 +245,33 @@ class ProxmoxCluster():
     def calculate_imbalances(self):
         unbalanced = False
         value_range = (.8, 1.2)
+        metrics = ["used_memory", "used_cpu_mhz", "running_vms"]
         self.stats["average"] = {}
-        self.stats["average"]["memory_usage"] = int(
-            statistics.mean([x.used_memory for x in self.proxmox_nodes]))
-        self.stats["average"]["cpu_usage"] = int(
-            statistics.mean([x.used_cpu_mhz for x in self.proxmox_nodes]))
-        self.stats["average"]["running_vms"] = int(
-            statistics.mean([x.running_vms for x in self.proxmox_nodes]))
+        for metric in metrics:
+            self.stats["average"][metric] = int(
+                statistics.mean([x.get_metric(metric) for x in self.proxmox_nodes]))
         for proxmox_node in self.proxmox_nodes:
             self.stats[proxmox_node.name] = {}
-            # Check Memory Usage
-            if proxmox_node.used_memory > self.stats["average"]["memory_usage"]*value_range[1]:
-                unbalanced = True
-                self.stats[proxmox_node.name]["memory_usage"] = "HIGH"
-                self.stats[proxmox_node.name]["memory_shed"] = proxmox_node.used_memory - \
-                    self.stats["average"]["memory_usage"]
-                logger.debug("Proxmox node %s has HIGH memory usage (%s > %s)",
-                             proxmox_node.name, proxmox_node.used_memory, self.stats["average"]["memory_usage"]*value_range[1])
-            elif proxmox_node.used_memory < self.stats["average"]["memory_usage"]*value_range[0]:
-                self.stats[proxmox_node.name]["memory_usage"] = "LOW"
-                self.stats[proxmox_node.name]["memory_get"] = self.stats["average"]["memory_usage"] - \
-                    proxmox_node.used_memory
-                logger.debug("Proxmox node %s has LOW memory usage (%s < %s)",
-                             proxmox_node.name, proxmox_node.used_memory, self.stats["average"]["memory_usage"]*value_range[0])
-            else:
-                self.stats[proxmox_node.name]["memory_usage"] = "OKAY"
-            # Check CPU Usage
-            if proxmox_node.used_cpu_mhz > self.stats["average"]["cpu_usage"]*value_range[1]:
-                unbalanced = True
-                self.stats[proxmox_node.name]["cpu_usage"] = "HIGH"
-                self.stats[proxmox_node.name]["cpu_usage_shed"] = proxmox_node.used_cpu_mhz - \
-                    self.stats["average"]["cpu_usage"]
-                logger.debug("Proxmox node %s has HIGH CPU usage (%s > %s)",
-                             proxmox_node.name, proxmox_node.used_cpu_mhz, self.stats["average"]["cpu_usage"]*value_range[1])
-            elif proxmox_node.used_cpu_mhz < self.stats["average"]["cpu_usage"]*value_range[0]:
-                self.stats[proxmox_node.name]["cpu_usage"] = "LOW"
-                self.stats[proxmox_node.name]["cpu_usage_get"] = self.stats["average"]["cpu_usage"] - \
-                    proxmox_node.used_cpu_mhz
-                logger.debug("Proxmox node %s has LOW CPU usage (%s < %s)",
-                             proxmox_node.name, proxmox_node.used_cpu_mhz, self.stats["average"]["cpu_usage"]*value_range[0])
-            else:
-                self.stats[proxmox_node.name]["cpu_usage"] = "OKAY"
-            # Check Running VM count
-            if proxmox_node.running_vms > int(self.stats["average"]["running_vms"]*value_range[1]):
-                unbalanced = True
-                self.stats[proxmox_node.name]["running_vms"] = "HIGH"
-                self.stats[proxmox_node.name]["running_vms_shed"] = proxmox_node.running_vms - \
-                    self.stats["average"]["running_vms"]
-                logger.debug("Proxmox node %s has HIGH running VMs (%s > %s)",
-                             proxmox_node.name, proxmox_node.running_vms, int(self.stats["average"]["running_vms"]*value_range[1]))
-            elif proxmox_node.running_vms < int(self.stats["average"]["running_vms"]*value_range[0]):
-                self.stats[proxmox_node.name]["running_vms"] = "LOW"
-                self.stats[proxmox_node.name]["running_vms_get"] = self.stats["average"]["running_vms"] - \
-                    proxmox_node.running_vms
-                logger.debug("Proxmox node %s has LOW running VMs (%s < %s)",
-                             proxmox_node.name, proxmox_node.running_vms, int(self.stats["average"]["running_vms"]*value_range[0]))
-            else:
-                self.stats[proxmox_node.name]["running_vms"] = "OKAY"
+            for metric in metrics:
+                if proxmox_node.get_metric(metric) > self.stats["average"][metric]*value_range[1]:
+                    unbalanced = True
+                    self.stats[proxmox_node.name][metric] = "HIGH"
+                    self.stats[proxmox_node.name][metric+"_shed"] = proxmox_node.get_metric(metric) - \
+                        self.stats["average"][metric]
+                    logger.debug("Proxmox node %s has HIGH %s usage (%s > %s)",
+                                 proxmox_node.name, metric, proxmox_node.get_metric(metric), self.stats["average"][metric]*value_range[1])
+                elif proxmox_node.get_metric(metric) < self.stats["average"][metric]*value_range[0]:
+                    self.stats[proxmox_node.name][metric] = "LOW"
+                    self.stats[proxmox_node.name][metric+"_get"] = self.stats["average"][metric] - \
+                        proxmox_node.get_metric(metric)
+                    logger.debug("Proxmox node %s has LOW %s usage (%s < %s)",
+                                 proxmox_node.name, metric, proxmox_node.get_metric(metric), self.stats["average"][metric]*value_range[0])
+                else:
+                    self.stats[proxmox_node.name][metric] = "OKAY"
+        logger.debug(self.stats)
         return unbalanced
+
+
 
     def get_lowest_loaded(self, metric="cpu"):
         filtered_nodes = [
@@ -313,11 +291,11 @@ class ProxmoxCluster():
         # First, we get all the machines that won't drain too much off of the host
         # but won't be a waste of time to move.
         if metric == "cpu":
-            vm_candidates = [x for x in vm_list if x.cost['vm_cpu_mhz']/self.stats[node]["cpu_usage_shed"] > minimum_pct
-                             and x.cost['vm_cpu_mhz']/self.stats[node]["cpu_usage_shed"] < maximum_pct]
+            vm_candidates = [x for x in vm_list if x.cost['vm_cpu_mhz']/self.stats[node]["used_cpu_mhz_shed"] > minimum_pct
+                             and x.cost['vm_cpu_mhz']/self.stats[node]["used_cpu_mhz_shed"] < maximum_pct]
         elif metric == "mem":
-            vm_candidates = [x for x in vm_list if x.used_memory/self.stats[node]["memory_shed"] > minimum_pct
-                             and x.used_memory/self.stats[node]["memory_shed"] < maximum_pct]
+            vm_candidates = [x for x in vm_list if x.used_memory/self.stats[node]["used_memory_shed"] > minimum_pct
+                             and x.used_memory/self.stats[node]["used_memory_shed"] < maximum_pct]
         else:
             vm_candidates = [
                 min(vm_list, key=lambda x: x.used_memory+x.cost['vm_cpu_mhz']), ]
@@ -350,12 +328,12 @@ class ProxmoxCluster():
         moving_vms = []
         maintenance_mode = [
             x for x in self.proxmox_nodes if x.status == "maintenance"]
-        while self.calculate_imbalances() and iterations < 100:
+        while self.calculate_imbalances2() and iterations < 100:
             iterations += 1
             proxmox_nodes_cpu_check = [
-                x for x in self.stats if self.stats[x]["cpu_usage"] == "HIGH"]
+                x for x in self.stats if self.stats[x]["used_cpu_mhz"] == "HIGH"]
             proxmox_nodes_mem_check = [
-                x for x in self.stats if self.stats[x]["memory_usage"] == "HIGH"]
+                x for x in self.stats if self.stats[x]["used_memory"] == "HIGH"]
             proxmox_nodes_vm_check = [
                 x for x in self.stats if self.stats[x]["running_vms"] == "HIGH"]
             # First things first, we need to check for maintenance mode and clear that system
@@ -384,7 +362,7 @@ class ProxmoxCluster():
             for node in proxmox_nodes_mem_check:
                 proxmox_node = self.get_node(node)
                 logger.info("Want to move %s Memory units off of %s",
-                            self.stats[node]["memory_shed"], node)
+                            self.stats[node]["used_memory"], node)
                 filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
                                 "running" and x.id not in self.excluded_vms]
                 potential_host = self.get_lowest_loaded(metric="mem")
@@ -397,7 +375,7 @@ class ProxmoxCluster():
                     logger.debug("Would probably move %s (%s Memory units) to: %s",
                                  virtual_machine_to_move.name, virtual_machine_to_move.used_memory, potential_host)
                     logger.debug("%s - percentage of shed: %s",
-                                 virtual_machine_to_move.name, (virtual_machine_to_move.used_memory/self.stats[node]["memory_shed"])*100)
+                                 virtual_machine_to_move.name, (virtual_machine_to_move.used_memory/self.stats[node]["used_memory_shed"])*100)
                     planned_moves.append(
                         (proxmox_node, virtual_machine_to_move, potential_host))
                     moving_vms.append(virtual_machine_to_move)
@@ -408,7 +386,7 @@ class ProxmoxCluster():
             for node in proxmox_nodes_cpu_check:
                 proxmox_node = self.get_node(node)
                 logger.info("Want to move %s CPU units off of %s",
-                            self.stats[node]["cpu_usage_shed"], node)
+                            self.stats[node]["used_cpu_mhz_shed"], node)
                 potential_host = self.get_lowest_loaded(metric="cpu")
                 filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
                                 "running" and x.id not in self.excluded_vms]
@@ -421,7 +399,7 @@ class ProxmoxCluster():
                     logger.debug("Would probably move %s (%s CPU units) to: %s",
                                  virtual_machine_to_move.name, virtual_machine_to_move.cost['vm_cpu_mhz'], potential_host)
                     logger.debug("%s - percentage of shed: %s",
-                                 virtual_machine_to_move.name, (virtual_machine_to_move.cost['vm_cpu_mhz']/self.stats[node]["cpu_usage_shed"])*100)
+                                 virtual_machine_to_move.name, (virtual_machine_to_move.cost['vm_cpu_mhz']/self.stats[node]["used_cpu_mhz_shed"])*100)
                     planned_moves.append(
                         (proxmox_node, virtual_machine_to_move, potential_host))
                     moving_vms.append(virtual_machine_to_move)
