@@ -462,10 +462,14 @@ def main():
     ch.setFormatter(formatter)
     # add the handlers to the logger
     logger.addHandler(ch)
+    if config.get('main', 'loglevel'):
+        log_level = config.get('main', 'loglevel')
+    else:
+        log_level = logging.INFO
     if config.get('main', 'logdir'):
         fh = logging.FileHandler(config.get(
             'main', 'logdir')+'/proxmox_wlb.log')
-        fh.setLevel(logging.DEBUG)
+        fh.setLevel(log_level)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
     proxmox = ProxmoxCluster(config, simulate=args.simulate)
