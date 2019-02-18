@@ -203,7 +203,7 @@ class ProxmoxCluster():
 
     def get_proxmox_vms(self, proxmox_node):
         for vm in self.proxmox.nodes(proxmox_node.name).qemu.get():
-            logger.info("Found VM: %s (%s) on node %s",
+            logger.debug("Found VM: %s (%s) on node %s",
                         vm['name'], vm['vmid'], proxmox_node)
             if vm['vmid'] in self.ha_vms:
                 logger.debug("VM: %s (%s) has HA configuration",
@@ -388,7 +388,8 @@ class ProxmoxCluster():
 
 
     def perform_migration_plan(self, planned_moves):
-        logger.info("Planning the following moves: ")
+        if planned_moves:
+            logger.info("Planning the following moves: ")
         for move in planned_moves:
             source_host =  move[0]
             virtual_machine = move[1]
