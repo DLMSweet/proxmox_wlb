@@ -1,0 +1,4 @@
+- Hosts that cannot be on the same box
+- Hosts that must be grouped
+- Integration with the HA manager in Proxmox
+- Usage should be percentage instead of straight Mhz/MB, to support mixed-CPU/RAM clusters
