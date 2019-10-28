@@ -290,8 +290,8 @@ class ProxmoxCluster():
         return min(filtered_nodes, key=lambda x: x.used_memory)
 
     def filter_candidates(self, vm_list, node, metric="used_cpu_mhz", minimum_pct=.75, maximum_pct=1.50, depth=0):
-        if depth > 5:
-            # 5 iterations is enough
+        if depth > 15:
+            # 15 iterations is enough
             return None
         # First, we get all the machines that won't drain too much off of the host
         # but won't be a waste of time to move.
