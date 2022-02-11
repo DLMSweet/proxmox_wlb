@@ -168,8 +168,8 @@ class ProxmoxCluster():
                                                     'proxmox', 'password'),
                                                 verify_ssl=self.config.getboolean('proxmox', 'verify_ssl'))
             self.connected = True
-        except e:
-            print(e)
+        except requests.exceptions.ConnectionError as e:
+            logger.exception(e)
             sys.exit(1)
 
     def get_ha_vms(self):
@@ -252,7 +252,7 @@ class ProxmoxCluster():
 
     def calculate_imbalances(self):
         unbalanced = False
-        value_range = (.8, 1.75)
+        value_range = (.8, 1.20)
         self.stats["average"] = {}
         for metric in self.metrics:
             self.stats["average"][metric] = int(
@@ -359,6 +359,7 @@ class ProxmoxCluster():
         while self.calculate_imbalances() and iterations < 100:
             iterations += 1
             for metric in self.metrics:
+                logger.debug("Comparing {}".format(metric))
                 proxmox_nodes_check = [x for x in self.stats if self.stats[x][metric] == "HIGH"]
                 for node in proxmox_nodes_check:
                     proxmox_node = self.get_node(node)
@@ -418,7 +419,7 @@ class ProxmoxCluster():
                     logger.info(
                         "Migration of %s to %s finished with status: %s", virtual_machine, destination_host, exit_status)
                 except proxmoxer.core.ResourceException as e:
-                    logger.error(
+                    logger.warning(
                         "Migration failed with an error: %s | Is another migration already in progress?", e)
             else:
                 logger.warning("Would migrate VM %s from %s to %s",
@@ -431,13 +432,6 @@ class ProxmoxCluster():
 def main():
     PID_FILE_LOC = '/var/run/proxmox_wlb.pid'
     PID_FILE = open(PID_FILE_LOC, 'w')
-    try:
-        fcntl.lockf(PID_FILE, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except IOError:
-        # another instance is running
-        print("Another instance is running, exiting...")
-        sys.exit(0)
-
     config = configparser.RawConfigParser()
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", dest="config_file",
@@ -473,6 +467,14 @@ def main():
         fh.setLevel(log_level)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
+
+    try:
+        fcntl.lockf(PID_FILE, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        # another instance is running
+        logger.warning("Another instance is running, exiting...")
+        sys.exit(0)
+
     proxmox = ProxmoxCluster(config, simulate=args.simulate)
     proxmox.connect()
     proxmox.get_cluster_info()
