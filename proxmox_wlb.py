@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+#pylint: disable=line-too-long
+#pylint: disable=missing-function-docstring
 import os
 import logging
 import fcntl
@@ -15,18 +17,20 @@ class ProxmoxVM():
     # pylint: disable=too-many-instance-attributes
     def __init__(self, name, id, ha=False):
         """Define our VM, we require just name and ID"""
+        self.logger = logging.getLogger("proxmox_wlb.ProxmoxVM")
+        self.logger.debug("Creating new instance of VM with ID %s and name %s", id, name)
         self.name = name
         self.id = id
         self.ha = ha
         self.child_vms = []
-        self.state = "" 
+        self.state = ""
         self.max_memory = 0
         self.used_memory = 0
         self.cpus = 0
         self.cpu_usage = 0
         self.cost = {}
 
-    def set_state(self, state):
+    def set_state(self, state: str):
         """Set the VM state, eg: "running", "stopped", etc"""
         self.state = state
 
@@ -57,13 +61,13 @@ class ProxmoxVM():
     def __repr__(self):
         return str(self.name)
 
-
 class ProxmoxHost():
     """Represents a Proxmox Host, we pass in the name and status
        and it keeps track of it's memory, cpu, running vms, etc"""
     # pylint: disable=too-many-instance-attributes
     def __init__(self, name, status):
         """Creates a new ProxmoxHost object"""
+        self.logger = logging.getLogger("proxmox_wlb.ProxmoxHost")
         self.name = name
         self.status = status
         self.child_vms = []
@@ -78,16 +82,6 @@ class ProxmoxHost():
         self.used_memory = 0
         self.used_cpu_mhz = 0
         self.running_vms = 0
-
-    def set_cpu_info(self, cpu_speed, cpu_count):
-        """Get the number of cpu cores, speed, and max usable mhz"""
-        self.per_cpu_mhz = cpu_speed
-        self.cpu_count = cpu_count
-        self.max_mhz = cpu_count*cpu_speed
-
-    def set_mem_info(self, max_memory):
-        """Sets total memory"""
-        self.max_memory = max_memory
 
     def get_usage(self):
         """Returns the total used and free CPU and Memory, and also the
@@ -113,8 +107,7 @@ class ProxmoxHost():
     def add_vm(self, virtual_machine):
         """Adds a VM to the host and sets the cost of the VM"""
         vm_used_memory = virtual_machine.used_memory
-        vm_cpu_mhz = virtual_machine.cpu_usage * \
-            (virtual_machine.cpus*self.per_cpu_mhz)
+        vm_cpu_mhz = virtual_machine.cpu_usage * (virtual_machine.cpus*self.per_cpu_mhz)
         vm_cost = {"used_memory": vm_used_memory, "vm_cpu_mhz": vm_cpu_mhz}
         virtual_machine.set_cost(vm_cost)
         self.child_vms.append(virtual_machine)
@@ -144,17 +137,19 @@ class ProxmoxHost():
 
 
 class ProxmoxCluster():
-
     # pylint: disable=too-many-instance-attributes
     def __init__(self, config, simulate=False):
+        self.logger = logging.getLogger("proxmox_wlb.ProxmoxCluster")
         self.config = config
         self.simulate = simulate
         self.connected = False
-        self.excluded_vms = self.config.get('exclude_vms', 'id').split(",")
+        self.excluded_vms = [int(x) for x in self.config.get('exclude_vms', 'id').split(",")]
+        self.logger.debug("Found the following excluded VMs: %s", self.excluded_vms)
+        self.moving_vms = []
         self.proxmox = None
         self.ha_vms = []
         self.maintenance_mode = []
-        self.proxmox_nodes = []
+        self.proxmox_nodes = {}
         self.stats = {}
         # What metrics we balance on
         self.metrics = ["used_cpu_mhz", "used_memory", "running_vms"]
@@ -162,20 +157,18 @@ class ProxmoxCluster():
     def connect(self):
         try:
             self.proxmox = proxmoxer.ProxmoxAPI(self.config.get('proxmox', 'host'),
-                                                user=self.config.get(
-                                                    'proxmox', 'user'),
-                                                password=self.config.get(
-                                                    'proxmox', 'password'),
+                                                user=self.config.get('proxmox', 'user'),
+                                                password=self.config.get('proxmox', 'password'),
                                                 verify_ssl=self.config.getboolean('proxmox', 'verify_ssl'))
             self.connected = True
-        except requests.exceptions.ConnectionError as e:
-            logger.exception(e)
-            sys.exit(1)
+        except Exception as e:
+            self.logger.exception(e)
+            raise
 
     def get_ha_vms(self):
-        logger.debug("Finding VMs set up for HA")
+        self.logger.debug("Finding VMs set up for HA")
         for ha_vm in self.proxmox.cluster.ha.resources.get():
-            logger.debug("Found HA VM: %s", ha_vm['sid'])
+            self.logger.debug("Found HA VM: %s", ha_vm['sid'])
             self.ha_vms.append(str(ha_vm['sid']).split(':')[1])
 
     def get_maintenance(self):
@@ -183,31 +176,39 @@ class ProxmoxCluster():
             if file.endswith(".maintenance"):
                 self.maintenance_mode.append(file.replace(".maintenance", ""))
 
+    def get_movable_vms(self, proxmox_node):
+        moveable_vms = [x for x in proxmox_node.child_vms if x not in self.moving_vms and x.state == "running" and x.id not in self.excluded_vms]
+        self.logger.debug("Movable VMs on %s are: %s", proxmox_node, moveable_vms)
+        return moveable_vms
+
     def get_proxmox_nodes(self):
         self.get_maintenance()
         for node in self.proxmox.nodes.get():
+            self.logger.debug("Found node with name %s", node['node'])
             if node['status'] == 'offline':
-                proxmox_node = ProxmoxHost(node['node'], "offline")
+                self.proxmox_nodes[node['node']] = ProxmoxHost(node['node'], "offline")
+                continue
+            if node['node'] in self.maintenance_mode:
+                proxmox_node = ProxmoxHost(node['node'], "maintenance")
             else:
-                if node['node'] in self.maintenance_mode:
-                    proxmox_node = ProxmoxHost(node['node'], "maintenance")
-                else:
-                    proxmox_node = ProxmoxHost(node['node'], "online")
-                proxmox_node.set_cpu_info(int(float(self.proxmox.nodes(
-                    node['node']).status.get()['cpuinfo']['mhz'])), node['maxcpu'])
-                proxmox_node.set_mem_info(node['maxmem'])
-                self.proxmox_nodes.append(proxmox_node)
+                proxmox_node = ProxmoxHost(node['node'], "online")
+            # Proxmox returns these as "3300.000", floats encoded as strings.
+            proxmox_node.per_cpu_mhz = float(self.proxmox.nodes(node['node']).status.get()['cpuinfo']['mhz'])
+            proxmox_node.cpu_count = int(node['maxcpu'])
+            proxmox_node.max_mhz = proxmox_node.per_cpu_mhz * proxmox_node.cpu_count
+            proxmox_node.max_memory = int(node['maxmem'])
+            self.proxmox_nodes[node['node']] = proxmox_node
 
-    def get_node(self, nodename):
-        return [x for x in self.proxmox_nodes if x.name == nodename][0]
+    def get_node(self, nodename: str):
+        self.logger.debug("looking for %s in all nodes: %s", nodename, list(self.proxmox_nodes.keys()))
+        self.logger.debug("returning %s for %s", type(self.proxmox_nodes[nodename]), nodename)
+        return self.proxmox_nodes[nodename]
 
     def get_proxmox_vms(self, proxmox_node):
         for vm in self.proxmox.nodes(proxmox_node.name).qemu.get():
-            logger.debug("Found VM: %s (%s) on node %s",
-                        vm['name'], vm['vmid'], proxmox_node)
+            self.logger.debug("Found VM: %s (%s) on node %s", vm['name'], vm['vmid'], proxmox_node)
             if vm['vmid'] in self.ha_vms:
-                logger.debug("VM: %s (%s) has HA configuration",
-                             vm['name'], vm['vmid'])
+                self.logger.debug("VM: %s (%s) has HA configuration", vm['name'], vm['vmid'])
                 proxmox_vm = ProxmoxVM(vm['name'], vm['vmid'], ha=True)
             else:
                 proxmox_vm = ProxmoxVM(vm['name'], vm['vmid'])
@@ -225,27 +226,26 @@ class ProxmoxCluster():
                 # The values we get back are a percentage of how much CPU is being used
                 # against what we've allocated. '1' is 100%. So '1' on a machine with 1 core
                 # is almost nothing, while '1' on a machine with 24 cores is a bunch.
-                #logger.debug("Got the following CPU history for %s (%s): %s", vm['name'], vm['vmid'], cpu_usage)
+                #self.logger.debug("Got the following CPU history for %s (%s): %s", vm['name'], vm['vmid'], cpu_usage)
                 cpu_usage = sum(cpu_usage)/float(len(cpu_usage))
             except ZeroDivisionError:
-                logger.debug(
+                self.logger.debug(
                     "Got ZeroDivisionError on %s (%s), it's probably turned off", vm['name'], vm['vmid'])
                 cpu_usage = 0
                 proxmox_vm.set_state("stopped")
 
             proxmox_vm.set_cpu_usage(vm['cpus'], cpu_usage)
             proxmox_node.add_vm(proxmox_vm)
-            logger.debug("Finished processing VM: %s (%s)",
-                         vm['name'], vm['vmid'])
+            self.logger.debug("Finished processing VM: %s (%s)", vm['name'], vm['vmid'])
 
     def get_cluster_info(self):
         self.get_ha_vms()
         self.get_proxmox_nodes()
-        for proxmox_node in self.proxmox_nodes:
+        for proxmox_node in self.proxmox_nodes.values():
             self.get_proxmox_vms(proxmox_node)
 
     def summary(self):
-        for node in self.proxmox_nodes:
+        for node in self.proxmox_nodes.values():
             print(node, node.get_usage())
             for vm in node.get_vms():
                 print("\t %s - %s" % (vm, vm.cost))
@@ -255,9 +255,8 @@ class ProxmoxCluster():
         value_range = (.8, 1.20)
         self.stats["average"] = {}
         for metric in self.metrics:
-            self.stats["average"][metric] = int(
-                statistics.mean([x.get_metric(metric) for x in self.proxmox_nodes]))
-        for proxmox_node in self.proxmox_nodes:
+            self.stats["average"][metric] = int(statistics.mean([x.get_metric(metric) for x in self.proxmox_nodes.values()]))
+        for proxmox_node in self.proxmox_nodes.values():
             self.stats[proxmox_node.name] = {}
             for metric in self.metrics:
                 if proxmox_node.get_metric(metric) > self.stats["average"][metric]*value_range[1]:
@@ -265,13 +264,13 @@ class ProxmoxCluster():
                     self.stats[proxmox_node.name][metric] = "HIGH"
                     self.stats[proxmox_node.name][metric+"_shed"] = proxmox_node.get_metric(metric) - \
                         self.stats["average"][metric]
-                    logger.debug("Proxmox node %s has HIGH %s usage (%s > %s)",
+                    self.logger.debug("Proxmox node %s has HIGH %s usage (%s > %s)",
                                  proxmox_node.name, metric, proxmox_node.get_metric(metric), self.stats["average"][metric]*value_range[1])
                 elif proxmox_node.get_metric(metric) < self.stats["average"][metric]*value_range[0]:
                     self.stats[proxmox_node.name][metric] = "LOW"
                     self.stats[proxmox_node.name][metric+"_get"] = self.stats["average"][metric] - \
                         proxmox_node.get_metric(metric)
-                    logger.debug("Proxmox node %s has LOW %s usage (%s < %s)",
+                    self.logger.debug("Proxmox node %s has LOW %s usage (%s < %s)",
                                  proxmox_node.name, metric, proxmox_node.get_metric(metric), self.stats["average"][metric]*value_range[0])
                 else:
                     self.stats[proxmox_node.name][metric] = "OKAY"
@@ -280,8 +279,7 @@ class ProxmoxCluster():
 
 
     def get_lowest_loaded(self, metric="cpu"):
-        filtered_nodes = [
-            x for x in self.proxmox_nodes if x.status == "online"]
+        filtered_nodes = [x for x in self.proxmox_nodes.values() if x.status == "online"]
         if metric == "used_cpu_mhz":
             return min(filtered_nodes, key=lambda x: x.used_cpu_mhz)
         if metric == "running_vms":
@@ -302,16 +300,13 @@ class ProxmoxCluster():
             vm_candidates = [x for x in vm_list if x.used_memory/self.stats[node]["used_memory_shed"] > minimum_pct
                              and x.used_memory/self.stats[node]["used_memory_shed"] < maximum_pct]
         else:
-            vm_candidates = [
-                min(vm_list, key=lambda x: x.used_memory+x.cost['vm_cpu_mhz']), ]
-        logger.debug("VMs after candidate filtering: %s (min_pct=%s)",
-                     vm_candidates, minimum_pct)
+            vm_candidates = [min(vm_list, key=lambda x: x.used_memory+x.cost['vm_cpu_mhz']), ]
+        self.logger.debug("VMs after candidate filtering: %s (min_pct=%s)", vm_candidates, minimum_pct)
         if not vm_candidates:
             # No matches, reduce our shed by 10% and try again
             minimum_pct = minimum_pct*.90
             maximum_pct = maximum_pct*1.1
-            vm_candidates = self.filter_candidates(
-                vm_list, node, metric, minimum_pct=minimum_pct, maximum_pct=maximum_pct, depth=depth+1)
+            vm_candidates = self.filter_candidates(vm_list, node, metric, minimum_pct=minimum_pct, maximum_pct=maximum_pct, depth=depth+1)
         try:
             if len(vm_candidates) == 1:
                 virtual_machine_to_move = vm_candidates[0]
@@ -323,65 +318,52 @@ class ProxmoxCluster():
                     vm_candidates, key=lambda x: x.used_memory)
         except TypeError:
             virtual_machine_to_move = vm_candidates
-        logger.debug("Choosen VM: %s", virtual_machine_to_move)
+        self.logger.debug("Choosen VM: %s", virtual_machine_to_move)
         return virtual_machine_to_move
 
     def migration_planner(self):
         iterations = 0
         # A list of tuples ("Source host", "Virtual Machine to Move", "Target Host")
         planned_moves = []
-        moving_vms = []
-        maintenance_mode = [
-            x for x in self.proxmox_nodes if x.status == "maintenance"]
+        maintenance_mode = [x for x in self.proxmox_nodes.values() if x.status == "maintenance"]
         # First things first, we need to check for maintenance mode and clear that system
         for node in maintenance_mode:
-            logger.info("Want to move ALL off of %s", node)
-            filtered_vms = [x for x in node.child_vms if x not in moving_vms and x.state ==
-                            "running" and x.id not in self.excluded_vms]
+            self.logger.info("Want to move ALL off of %s", node)
+            filtered_vms = self.get_movable_vms(node)
             while filtered_vms:
                 # We look for the host with the lowest memory first, as that tends to be the usual bottleneck
                 potential_host = self.get_lowest_loaded(metric="mem")
                 # It doesn't really matter what order we do this in, but we start with the smallest
-                logger.debug(
-                    "VMs not already being moved: %s", filtered_vms)
+                self.logger.debug("VMs not already being moved: %s", filtered_vms)
                 virtual_machine_to_move = min(filtered_vms, key=lambda x: x.used_memory)
-                logger.debug("Would probably move %s to: %s",
-                             virtual_machine_to_move.name, potential_host)
-                planned_moves.append(
-                    (node, virtual_machine_to_move, potential_host))
-                moving_vms.append(virtual_machine_to_move)
+                self.logger.debug("Would probably move %s to: %s", virtual_machine_to_move.name, potential_host)
+                planned_moves.append((node, virtual_machine_to_move, potential_host))
+                self.moving_vms.append(virtual_machine_to_move)
                 node.remove_vm(virtual_machine_to_move)
                 potential_host.add_vm(virtual_machine_to_move)
-                filtered_vms = [x for x in node.child_vms if x not in moving_vms and x.state ==
-                                "running" and x.id not in self.excluded_vms]
-
-
+                filtered_vms = self.get_movable_vms(node)
         while self.calculate_imbalances() and iterations < 100:
             iterations += 1
             for metric in self.metrics:
-                logger.debug("Comparing {}".format(metric))
+                self.logger.debug("Comparing {}".format(metric))
                 proxmox_nodes_check = [x for x in self.stats if self.stats[x][metric] == "HIGH"]
                 for node in proxmox_nodes_check:
+                    self.logger.debug("getting proxmox_node for %s, which is a %s", node, type(node))
                     proxmox_node = self.get_node(node)
-                    logger.info("Want to move %s %s units off of %s",
-                                metric, self.stats[node][metric+"_shed"], node)
-                    filtered_vms = [x for x in proxmox_node.child_vms if x not in moving_vms and x.state ==
-                                    "running" and x.id not in self.excluded_vms]
+                    self.logger.info("Want to move %s %s units off of %s", metric, self.stats[node][metric+"_shed"], node)
+                    filtered_vms = self.get_movable_vms(proxmox_node)
+                    self.logger.debug("Found the following allowed VMs: %s", filtered_vms)
                     potential_host = self.get_lowest_loaded(metric=metric)
-                    logger.debug("VMs not already being moved: %s", filtered_vms)
+                    self.logger.debug("VMs not already being moved: %s", filtered_vms)
                     if not filtered_vms:
                         continue
-                    virtual_machine_to_move = self.filter_candidates(
-                        filtered_vms, node, metric=metric)
+                    virtual_machine_to_move = self.filter_candidates(filtered_vms, proxmox_node.name, metric=metric)
                     if virtual_machine_to_move:
-                        logger.debug("Would probably move %s (%s %s units) to: %s | Reason: Reduce %s on %s",
-                                     virtual_machine_to_move.name, virtual_machine_to_move.get_metric(metric), metric, potential_host,
-                                     metric, node)
-                        logger.debug("%s - percentage of shed: %s",
-                                     virtual_machine_to_move.name, (virtual_machine_to_move.get_metric(metric)/self.stats[node][metric+"_shed"])*100)
+                        self.logger.debug("Would probably move %s (%s %s units) to: %s | Reason: Reduce %s on %s", virtual_machine_to_move.name, virtual_machine_to_move.get_metric(metric), metric, potential_host, metric, proxmox_node.name)
+                        self.logger.debug("%s - percentage of shed: %s", virtual_machine_to_move.name, (virtual_machine_to_move.get_metric(metric)/self.stats[proxmox_node.name][metric+"_shed"])*100)
                         planned_moves.append(
                             (proxmox_node, virtual_machine_to_move, potential_host))
-                        moving_vms.append(virtual_machine_to_move)
+                        self.moving_vms.append(virtual_machine_to_move)
                         proxmox_node.remove_vm(virtual_machine_to_move)
                         potential_host.add_vm(virtual_machine_to_move)
 
@@ -390,48 +372,39 @@ class ProxmoxCluster():
 
     def perform_migration_plan(self, planned_moves):
         if planned_moves:
-            logger.info("Planning the following moves: ")
+            self.logger.info("Planning the following moves: ")
         for move in planned_moves:
             source_host =  move[0]
             virtual_machine = move[1]
             destination_host = move[2]
-            logger.info("MOVE: VM: %s, from %s to %s", virtual_machine, source_host, destination_host)
+            self.logger.info("MOVE: VM: %s, from %s to %s", virtual_machine, source_host, destination_host)
         for move in planned_moves:
             source_host =  move[0]
             virtual_machine = move[1]
             destination_host = move[2]
             if not self.simulate:
-                logger.warning("Migrating VM %s from %s to %s",
-                               virtual_machine,
-                               source_host,
-                               destination_host)
+                self.logger.warning("Migrating VM %s from %s to %s", virtual_machine, source_host, destination_host)
                 try:
                     task_name = self.proxmox.nodes(source_host).qemu(
                         virtual_machine.id).migrate.post(target=destination_host, online=1)
-                    logger.info(
-                        "Migration of %s started with task ID of %s", virtual_machine, task_name)
+                    self.logger.info("Migration of %s started with task ID of %s", virtual_machine, task_name)
                     while self.proxmox.nodes(source_host).tasks(task_name).get('status')['status'] != "stopped":
                         time.sleep(10)
-                        logger.debug(
-                            "Waiting for migration of %s -> %s to complete...", virtual_machine, destination_host)
+                        self.logger.debug("Waiting for migration of %s -> %s to complete...", virtual_machine, destination_host)
                     exit_status = self.proxmox.nodes(source_host).tasks(
                         task_name).get('status')['exitstatus']
-                    logger.info(
-                        "Migration of %s to %s finished with status: %s", virtual_machine, destination_host, exit_status)
+                    self.logger.info("Migration of %s to %s finished with status: %s", virtual_machine, destination_host, exit_status)
                 except proxmoxer.core.ResourceException as e:
-                    logger.warning(
-                        "Migration failed with an error: %s | Is another migration already in progress?", e)
+                    self.logger.warning("Migration failed with an error: %s | Is another migration already in progress?", e)
             else:
-                logger.warning("Would migrate VM %s from %s to %s",
-                               virtual_machine, source_host, destination_host)
+                self.logger.warning("Would migrate VM %s from %s to %s", virtual_machine, source_host, destination_host)
 
     def __str__(self):
-        return str(self.proxmox_nodes)
+        return str(list(self.proxmox_nodes))
 
 
 def main():
-    PID_FILE_LOC = '/var/run/proxmox_wlb.pid'
-    PID_FILE = open(PID_FILE_LOC, 'w')
+    pidfile = '/var/run/proxmox_wlb.pid'
     config = configparser.RawConfigParser()
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config", dest="config_file",
@@ -452,8 +425,7 @@ def main():
     else:
         ch.setLevel(logging.ERROR)
     # create formatter and add it to the handlers
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('[%(asctime)s] p%(process)s {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s','%m-%d %H:%M:%S')
     ch.setFormatter(formatter)
     # add the handlers to the logger
     logger.addHandler(ch)
@@ -467,19 +439,18 @@ def main():
         fh.setLevel(log_level)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
-
-    try:
-        fcntl.lockf(PID_FILE, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except IOError:
-        # another instance is running
-        logger.warning("Another instance is running, exiting...")
-        sys.exit(0)
+    with open(pidfile, 'w', encoding="utf-8") as pid:
+        try:
+            fcntl.lockf(pid, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except IOError:
+            # another instance is running
+            logger.warning("Another instance is running, exiting...")
+            sys.exit(0)
 
     proxmox = ProxmoxCluster(config, simulate=args.simulate)
     proxmox.connect()
     proxmox.get_cluster_info()
     proxmox.perform_migration_plan(proxmox.migration_planner())
-
 
 if __name__ == "__main__":
     logger = logging.getLogger('proxmox_wlb')
